@@ -98,20 +98,18 @@ function send(text, buttons, silent = false) {
   });
 }
 
-const liveButtons = (m) => [
-  [
-    { text: "📺 방송 보러가기", url: liveUrl(m.id) },
-    { text: "📢 채널", url: channelUrl(m.id) },
-  ],
-];
+// 버튼 색: danger=빨강, primary=파랑, success=초록 (Bot API 9.4+, 구버전 앱에선 기본색)
+const btn = (text, url, style) => ({ text, url, ...(style && { style }) });
+const quote = (t) => `<blockquote>${t}</blockquote>`;
+const liveButtons = (m) => [[btn("▶ LIVE 시청하기", liveUrl(m.id), "danger"), btn("채널", channelUrl(m.id))]];
 
 // ───── 방송 켜짐/꺼짐 ─────
 const notifyLiveOn = (m, cur) =>
   send(
-    `🔴 <b>${esc(m.name)}</b> 방송 시작!\n${esc(cur.title)}` + (cur.category ? `\n🎮 ${esc(cur.category)}` : ""),
+    `🔴 <b>LIVE</b> · <b>${esc(m.name)}</b>\n${quote(esc(cur.title || "제목 없음"))}` + (cur.category ? `\n🎮 ${esc(cur.category)}` : ""),
     liveButtons(m),
   );
-const notifyLiveOff = (m) => send(`⚫ ${esc(m.name)} 방송 종료`, [[{ text: "📢 채널", url: channelUrl(m.id) }]], true);
+const notifyLiveOff = (m) => send(`⚫ <b>${esc(m.name)}</b> 방송 종료`, [[btn("채널", channelUrl(m.id))]], true);
 const state = new Map(); // id -> { status, chatChannelId, title, category, offCount }
 
 async function fetchLive(m) {
@@ -299,10 +297,10 @@ async function flushChat(key, who, streamer) {
   pending.delete(key);
   if (!b) return;
   const where = who.id === streamer.id ? "자기 방송" : `${esc(streamer.name)} 방송`;
-  const lines = b.lines.slice(-10).map((l) => `• ${esc(l)}`).join("\n");
+  const lines = b.lines.slice(-10).map((l) => esc(l)).join("\n");
   log("멤버 채팅", who.name, "→", streamer.name, b.lines.length + "줄");
-  await send(`${b.donation ? "💰" : "💬"} <b>${esc(who.name)}</b> → ${where} 채팅\n${lines}`, [
-    [{ text: `📺 ${streamer.name} 방송 보기`, url: liveUrl(streamer.id) }],
+  await send(`${b.donation ? "💰" : "💬"} <b>${esc(who.name)}</b> → ${where}${b.donation ? " 후원" : ""}\n${quote(lines)}`, [
+    [btn(`▶ ${streamer.name} 방송 보기`, liveUrl(streamer.id), "primary")],
   ]);
 }
 
@@ -328,20 +326,32 @@ const mentionsMember = (text) => {
   return [...memberNames, ...X_KEYWORDS].some((n) => t.includes(n.replace(/\s/g, "")));
 };
 
-// 전달할 알림이면 { icon, head, button } 반환
+// X 알림에서 어느 멤버인지 (이름·X 아이디, 유니는 "유니 Yuni")
+function findXMember(text) {
+  const t = text.replace(/\s/g, "").toLowerCase();
+  return members.find(
+    (m) => t.includes(m.name.replace(/\s/g, "")) || (m.x && t.includes(m.x.toLowerCase())) ||
+      (m.x === "AyatsunoYuni" && t.includes("yuni")),
+  );
+}
+
+// 전달할 알림이면 { head, button } 반환
 function classify(n) {
   const title = n.title ?? "";
   const content = n.content ?? "";
   if (n.packageName === "com.nhn.android.navercafe" && CAFE_NAMES.includes(title)) {
-    return { head: `📰 <b>${esc(title)}</b> 카페`, button: { text: "📰 카페 열기", url: CAFE_URL } };
+    return { head: `☕ <b>${esc(title)} 카페</b> · 새 글`, button: btn("☕ 카페 앱에서 보기", CAFE_URL, "success") };
   }
   if (n.packageName === "com.twitter.android" && mentionsMember(`${title} ${content}`)) {
-    return { head: `🐦 <b>X</b> ${esc(title)}`, button: { text: "🐦 X 열기", url: "https://x.com/notifications" } };
+    const m = findXMember(`${title} ${content}`);
+    return m?.x
+      ? { head: `𝕏 <b>${esc(m.name)}</b> <i>@${m.x}</i>`, button: btn(`𝕏 ${m.name} 게시물 보기`, `https://x.com/${m.x}`, "primary") }
+      : { head: `𝕏 <b>${esc(title)}</b>`, button: btn("𝕏 알림 보기", "https://x.com/notifications", "primary") };
   }
   return null;
 }
 
-const forwardNotification = (n, c) => send(`${c.head}\n${esc(n.content)}`, [[c.button]]);
+const forwardNotification = (n, c) => send(`${c.head}\n${quote(esc(n.content))}`, [[c.button]]);
 
 async function pollNotifications(first = false) {
   const list = await listNotifications();
@@ -365,7 +375,7 @@ const notifyStart = (live) =>
   send(
     `🔔 스텔라이브 알림 시작 (${members.length}명 감시)\n` +
       (live.length ? `지금 방송 중: ${live.map((m) => esc(m.name)).join(", ")}` : "지금 방송 중인 멤버 없음"),
-    live.length ? live.map((m) => [{ text: `📺 ${m.name}`, url: liveUrl(m.id) }]) : undefined,
+    live.length ? live.map((m) => [btn(`▶ ${m.name}`, liveUrl(m.id), "danger")]) : undefined,
     true,
   );
 
