@@ -34,7 +34,9 @@ const RELAY_KEY = cfg("RELAY_KEY", "");
 const WATCH_NOTIF = cfg("WATCH_NOTIF", "1") === "1";
 const NOTIF_SEC = Number(cfg("NOTIF_SEC", 15));
 const CAFE_NAMES = cfg("CAFE_NAMES", "스텔라이브").split(",").map((x) => x.trim()).filter(Boolean);
-const CAFE_URL = cfg("CAFE_URL", "https://cafe.naver.com/stellive");
+const CAFE_ID = cfg("CAFE_ID", "tteokbokk1"); // 스텔라이브 공식 팬카페 주소 (cafe.naver.com/tteokbokk1)
+// 중계가 있으면 카페 앱으로 바로 여는 페이지, 없으면 웹 주소
+const CAFE_URL = cfg("CAFE_URL", RELAY_URL ? `${RELAY_URL}/open/cafe?u=${CAFE_ID}` : `https://cafe.naver.com/${CAFE_ID}`);
 const X_KEYWORDS = cfg("X_KEYWORDS", "").split(",").map((x) => x.trim()).filter(Boolean); // 멤버 이름 외 추가 키워드
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error(".env 에 BOT_TOKEN, CHAT_ID 가 필요합니다");
