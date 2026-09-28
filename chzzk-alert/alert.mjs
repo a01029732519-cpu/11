@@ -165,7 +165,7 @@ function chatServer(chatChannelId) {
 
 function startChat(streamer, chatChannelId, onReady) {
   if (!WATCH_CHAT || !chatChannelId || chats.has(streamer.id)) return;
-  const entry = { closed: false };
+  const entry = { closed: false, fails: 0 };
   chats.set(streamer.id, entry);
 
   const connect = async () => {
@@ -210,6 +210,7 @@ function startChat(streamer, chatChannelId, onReady) {
         }
         if (p.cmd === 0) return ws.send(JSON.stringify({ ver: "3", cmd: 10000 }));
         if (p.cmd === 10100) {
+          entry.fails = 0;
           log("채팅 접속", streamer.name, "retCode", p.retCode);
           onReady?.(p.retCode);
           return;
@@ -224,8 +225,11 @@ function startChat(streamer, chatChannelId, onReady) {
       };
       ws.onerror = () => {}; // 곧 onclose 가 와서 재접속
     } catch (e) {
-      log("채팅 접속 실패", streamer.name, e.message);
-      if (!entry.closed) setTimeout(connect, 15000);
+      // 채팅 서버가 막힌 네트워크(일부 와이파이)면 계속 실패함 → 15초부터 최대 5분까지 간격을 늘려 재시도
+      entry.fails++;
+      const wait = Math.min(15000 * 2 ** (entry.fails - 1), 300000);
+      if (entry.fails <= 3 || entry.fails % 10 === 0) log("채팅 접속 실패", streamer.name, e.message, `(${wait / 1000}초 후 재시도)`);
+      if (!entry.closed) setTimeout(connect, wait);
     }
   };
   connect();
