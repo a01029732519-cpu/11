@@ -453,7 +453,27 @@ async function test() {
   process.exit(results.every((r) => r.startsWith("✅")) ? 0 : 1);
 }
 
-(process.argv.includes("--test") ? test() : main()).catch((e) => {
+// X/카페 알림 전달 점검: 알림 모양의 JSON 파일을 실제 분류·전송 코드로 보냄
+async function testNotifFile(file) {
+  tag = "🧪 [X 테스트] ";
+  const list = JSON.parse(readFileSync(file, "utf8"));
+  let sentN = 0;
+  for (const n of list) {
+    const c = classify(n);
+    if (!c) {
+      log("무시:", n.title);
+      continue;
+    }
+    const r = await forwardNotification(n, c);
+    log(r?.ok ? "전송:" : "전송 실패:", n.title);
+    if (r?.ok) sentN++;
+  }
+  log(`완료: ${list.length}개 중 ${sentN}개 전송`);
+  process.exit(0);
+}
+
+const fileArg = process.argv.indexOf("--test-notif");
+(fileArg > 0 ? testNotifFile(process.argv[fileArg + 1]) : process.argv.includes("--test") ? test() : main()).catch((e) => {
   log("치명적 오류:", e);
   process.exit(1);
 });
