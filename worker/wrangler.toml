@@ -1,0 +1,10 @@
+name = "roblox-telegram-relay"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+CHAT_ID = "여기에_내_채팅_ID"
+
+# BOT_TOKEN, SECRET 은 비밀값이라 아래 명령으로 등록:
+#   npx wrangler secret put BOT_TOKEN
+#   npx wrangler secret put SECRET
