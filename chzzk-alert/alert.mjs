@@ -84,10 +84,11 @@ async function tg(method, body) {
   }
 }
 
+let tag = ""; // 테스트 모드에서 모든 메시지 앞에 붙는 표시
 function send(text, buttons, silent = false) {
   return tg("sendMessage", {
     chat_id: CHAT_ID,
-    text,
+    text: tag + text,
     parse_mode: "HTML",
     disable_web_page_preview: true,
     disable_notification: silent,
@@ -103,6 +104,12 @@ const liveButtons = (m) => [
 ];
 
 // ───── 방송 켜짐/꺼짐 ─────
+const notifyLiveOn = (m, cur) =>
+  send(
+    `🔴 <b>${esc(m.name)}</b> 방송 시작!\n${esc(cur.title)}` + (cur.category ? `\n🎮 ${esc(cur.category)}` : ""),
+    liveButtons(m),
+  );
+const notifyLiveOff = (m) => send(`⚫ ${esc(m.name)} 방송 종료`, [[{ text: "📢 채널", url: channelUrl(m.id) }]], true);
 const state = new Map(); // id -> { status, chatChannelId, title, category, offCount }
 
 async function fetchLive(m) {
@@ -132,10 +139,7 @@ async function checkMember(m, first) {
   if (isOpen) {
     if (prev.status !== "OPEN") {
       log("방송 시작", m.name, cur.title);
-      await send(
-        `🔴 <b>${esc(m.name)}</b> 방송 시작!\n${esc(cur.title)}` + (cur.category ? `\n🎮 ${esc(cur.category)}` : ""),
-        liveButtons(m),
-      );
+      await notifyLiveOn(m, cur);
     } else if (prev.chatChannelId !== cur.chatChannelId) {
       stopChat(m.id);
     }
@@ -153,7 +157,7 @@ async function checkMember(m, first) {
     }
     log("방송 종료", m.name);
     stopChat(m.id);
-    await send(`⚫ ${esc(m.name)} 방송 종료`, [[{ text: "📢 채널", url: channelUrl(m.id) }]], true);
+    await notifyLiveOff(m);
   }
   state.set(m.id, { ...cur, offCount: 0 });
 }
@@ -335,6 +339,8 @@ function classify(n) {
   return null;
 }
 
+const forwardNotification = (n, c) => send(`${c.head}\n${esc(n.content)}`, [[c.button]]);
+
 async function pollNotifications(first = false) {
   const list = await listNotifications();
   if (!list) return first ? log("폰 알림 읽기 실패 (Termux:API 알림 접근 권한 확인)") : undefined;
@@ -347,22 +353,25 @@ async function pollNotifications(first = false) {
     seenNotif.add(id);
     if (first) continue; // 시작할 때 이미 떠 있던 알림은 보내지 않음
     log("알림 전달", n.packageName, n.content.slice(0, 40));
-    await send(`${c.head}\n${esc(n.content)}`, [[c.button]]);
+    await forwardNotification(n, c);
   }
   if (seenNotif.size > 2000) seenNotif.clear(); // 오래 켜둘 때 메모리 정리 (드물게 중복 가능)
 }
 
 // ───── 실행 ─────
-async function main() {
-  await pollAll(true);
-  const live = members.filter((m) => state.get(m.id)?.status === "OPEN");
-  log("시작. 방송 중:", live.map((m) => m.name).join(", ") || "없음");
-  await send(
+const notifyStart = (live) =>
+  send(
     `🔔 스텔라이브 알림 시작 (${members.length}명 감시)\n` +
       (live.length ? `지금 방송 중: ${live.map((m) => esc(m.name)).join(", ")}` : "지금 방송 중인 멤버 없음"),
     live.length ? live.map((m) => [{ text: `📺 ${m.name}`, url: liveUrl(m.id) }]) : undefined,
     true,
   );
+
+async function main() {
+  await pollAll(true);
+  const live = members.filter((m) => state.get(m.id)?.status === "OPEN");
+  log("시작. 방송 중:", live.map((m) => m.name).join(", ") || "없음");
+  await notifyStart(live);
   if (WATCH_NOTIF) {
     await pollNotifications(true);
     (async () => {
@@ -378,32 +387,68 @@ async function main() {
   }
 }
 
+// 모든 기능 점검: 실제 연결 확인 + 알림 종류별 예시를 실제 전송 코드로 텔레그램에 보냄
 async function test() {
+  tag = "🧪 [테스트] ";
+  const results = [];
+  const check = (name, ok, detail = "") => {
+    results.push(`${ok ? "✅" : "❌"} ${name}${detail ? ` — ${detail}` : ""}`);
+    log(ok ? "OK  " : "FAIL", name, detail);
+  };
+
+  // 1) 방송 상태 (전원)
+  let okCount = 0;
+  for (const m of members) {
+    try {
+      state.set(m.id, await fetchLive(m));
+      okCount++;
+    } catch (e) {
+      log("상태 확인 실패", m.name, e.message);
+    }
+  }
+  const live = members.filter((m) => state.get(m.id)?.status === "OPEN");
+  check("치지직 방송 상태", okCount === members.length, `${okCount}/${members.length}명, 방송 중 ${live.length}명`);
+
+  // 2) 알림 종류별 예시 (실제 코드 경로)
   const m = members[0];
-  const cur = await fetchLive(m);
-  log("live-status OK:", m.name, cur.status, cur.chatChannelId);
-  const r = await send(
-    `🧪 테스트 알림\n🔴 <b>${esc(m.name)}</b> 방송 시작! (예시)\n${esc(cur.title)}`,
-    liveButtons(m),
-  );
-  log("텔레그램 전송:", r?.ok ? "OK" : "실패");
-  const ok = await new Promise((resolve) => {
+  const other = members[1];
+  const cur = state.get(m.id) ?? { title: "예시 방송", category: "talk" };
+  const sent = [];
+  sent.push(await notifyStart(live));
+  sent.push(await notifyLiveOn(m, { ...cur, title: cur.title || "예시 방송" }));
+  onChat(m, { uid: other.id, msg: "(예시) 안녕하세요~" }, false);
+  onChat(m, { uid: other.id, msg: "(예시) 두 번째 줄" }, false);
+  onChat(m, { uid: members[2].id, msg: "(예시) 후원 메시지" }, true);
+  onChat(m, { uid: "someone", msg: "일반 시청자 — 전달되면 안 됨" }, false);
+  await sleep(6000); // 채팅 묶음(5초) 전송 대기
+  const cafe = { packageName: "com.nhn.android.navercafe", title: CAFE_NAMES[0], content: `${members[7].name}님의 새글: (예시) 5시30분에 올게요~` };
+  const x = { packageName: "com.twitter.android", title: members[3].name, content: "(예시) 오늘 저녁 8시 방송!" };
+  const kakao = { packageName: "com.kakao.talk", title: "엄마", content: "전달되면 안 됨" };
+  check("카페/X 알림 분류", !!classify(cafe) && !!classify(x) && !classify(kakao), "카페·X 는 전달, 카톡은 무시");
+  sent.push(await forwardNotification(cafe, classify(cafe)));
+  sent.push(await forwardNotification(x, classify(x)));
+  sent.push(await notifyLiveOff(m));
+  const sentOk = sent.filter((r) => r?.ok).length;
+  check("텔레그램 전송", sentOk === sent.length, `${sentOk}/${sent.length}개 (+채팅 예시 2개)`);
+
+  // 3) 채팅 서버 실제 접속
+  const chatOk = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), 15000);
-    startChat(m, cur.chatChannelId, (ret) => {
+    startChat(m, state.get(m.id)?.chatChannelId, (ret) => {
       clearTimeout(timer);
       resolve(ret === 0);
     });
   });
-  log("채팅 서버 접속:", ok ? "OK" : "실패", RELAY_URL ? "(중계 경유)" : "(직접)");
   stopChat(m.id);
+  check("치지직 채팅 접속", chatOk, RELAY_URL ? "Cloudflare 중계 경유" : "직접 접속");
+
+  // 4) 폰 알림 읽기
   const list = await listNotifications();
-  if (!list) log("폰 알림 읽기: 실패");
-  else {
-    const hits = list.filter((n) => classify(n) && n.content);
-    log("폰 알림 읽기: OK,", list.length + "개 중 전달 대상", hits.length + "개");
-    for (const n of hits) log("  -", n.packageName, n.title, "|", n.content.slice(0, 40));
-  }
-  process.exit(ok && r?.ok ? 0 : 1);
+  const hits = list ? list.filter((n) => classify(n) && n.content) : [];
+  check("폰 알림 읽기", !!list, list ? `알림 ${list.length}개 중 전달 대상 ${hits.length}개` : "Termux:API 권한 확인");
+
+  await send(`<b>점검 결과</b>\n${results.join("\n")}`);
+  process.exit(results.every((r) => r.startsWith("✅")) ? 0 : 1);
 }
 
 (process.argv.includes("--test") ? test() : main()).catch((e) => {
