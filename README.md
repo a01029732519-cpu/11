@@ -26,6 +26,12 @@ curl -H "X-Secret: <SECRET>" https://roblox-telegram-relay.<계정>.workers.dev/
 ```
 나온 `chat_id`를 `wrangler.toml`의 `CHAT_ID`에 넣고 다시 `npx wrangler deploy`.
 
+### (대안) wrangler 없이 폰 Termux 에서 배포
+`worker/` 폴더에 `.env` 를 만들고(`BOT_TOKEN=`, `CHAT_ID=`, `CF_API_TOKEN=` 각 한 줄) `bash deploy.sh` 를 실행합니다.
+Cloudflare API 로 업로드하고, workers.dev 주소를 켜고, 동작 테스트까지 합니다.
+마지막에는 주소와 비밀키를 채운 Roblox 스크립트를 텔레그램으로 보내줍니다.
+`CF_API_TOKEN` 은 대시보드 → 내 프로필 → API 토큰 → "Cloudflare Workers 편집" 템플릿으로 만듭니다.
+
 ## 3. Roblox Studio
 1. 홈 → 게임 설정 → 보안 → **HTTP 요청 허용** 켜기
 2. `roblox/TelegramBridge.server.lua` 내용을 ServerScriptService 의 Script에 붙여넣기

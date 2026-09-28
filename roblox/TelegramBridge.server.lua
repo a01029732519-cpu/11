@@ -69,8 +69,8 @@ commands["/help"] = function()
 end
 
 local function handle(text)
-	local cmd, arg = text:match("^(%S+)%s*(.*)$")
-	if not cmd then return end
+	local cmd, arg = text:match("^(/%S+)%s*(.*)$")
+	if not cmd then return end -- / 로 시작하는 명령만 처리
 	cmd = cmd:gsub("@.*$", "") -- /players@봇이름 형태 대응
 	local fn = commands[cmd]
 	if fn then
@@ -91,13 +91,18 @@ end)
 send("🟢 서버 시작 (" .. (game.JobId ~= "" and game.JobId or "Studio") .. ")")
 
 -- 폴링 루프
+-- 첫 폴링은 서버가 꺼져 있던 동안 쌓인 옛날 명령을 건너뛰기만 한다 (예전 /kick 이 뒤늦게 실행되는 것 방지)
+local skipBacklog = true
 while true do
 	local data = request("GET", "/poll?offset=" .. offset)
 	if data and data.ok then
 		offset = data.next_offset
-		for _, c in data.commands do
-			handle(c.text)
+		if not skipBacklog then
+			for _, c in data.commands do
+				handle(c.text)
+			end
 		end
+		skipBacklog = false
 	end
 	task.wait(POLL_SECONDS)
 end
