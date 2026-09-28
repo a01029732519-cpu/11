@@ -1,9 +1,11 @@
 // 치지직 스텔라이브 멤버 방송/채팅 알림 → 텔레그램
 // - 방송 켜짐/꺼짐: 치지직 live-status 를 주기적으로 확인
 // - 채팅: 방송 중인 멤버 채팅방에 읽기 전용으로 접속해서, 다른 멤버가 채팅하면 알림
+// - 폰 알림 전달: 네이버 카페(스텔라이브) 새글 알림, X 앱 알림 중 멤버 관련 것을 텔레그램으로 (Termux:API 필요)
 // - 텔레그램은 보내기만 한다 (getUpdates/webhook 안 씀 → 같은 봇을 쓰는 다른 프로그램과 충돌 없음)
 // 실행: node alert.mjs          테스트: node alert.mjs --test
 import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 
 const dir = new URL(".", import.meta.url);
 const fileEnv = (() => {
@@ -25,6 +27,15 @@ const CHAT_ID = cfg("CHAT_ID");
 const POLL_SEC = Number(cfg("POLL_SEC", 30));
 const WATCH_CHAT = cfg("WATCH_CHAT", "1") === "1";
 const ALERT_OWN_CHAT = cfg("ALERT_OWN_CHAT", "0") === "1"; // 자기 방송에서 치는 채팅도 알릴지
+// 채팅 서버가 막힌 와이파이용 Cloudflare 중계 (relay/deploy.sh 가 채워줌). 비어 있으면 직접 접속
+const RELAY_URL = cfg("RELAY_URL", "").replace(/\/$/, "");
+const RELAY_KEY = cfg("RELAY_KEY", "");
+// 폰 알림 전달
+const WATCH_NOTIF = cfg("WATCH_NOTIF", "1") === "1";
+const NOTIF_SEC = Number(cfg("NOTIF_SEC", 15));
+const CAFE_NAMES = cfg("CAFE_NAMES", "스텔라이브").split(",").map((x) => x.trim()).filter(Boolean);
+const CAFE_URL = cfg("CAFE_URL", "https://cafe.naver.com/stellive");
+const X_KEYWORDS = cfg("X_KEYWORDS", "").split(",").map((x) => x.trim()).filter(Boolean); // 멤버 이름 외 추가 키워드
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error(".env 에 BOT_TOKEN, CHAT_ID 가 필요합니다");
   process.exit(1);
@@ -158,9 +169,22 @@ async function pollAll(first = false) {
 const chats = new Map(); // 방송 중인 멤버 id -> { ws, ping, closed }
 const pending = new Map(); // "채팅친멤버>방송멤버" -> { lines, donation }
 
-function chatServer(chatChannelId) {
+function chatServerNo(chatChannelId) {
   const sum = [...chatChannelId].reduce((a, c) => a + c.charCodeAt(0), 0);
-  return `wss://kr-ss${(sum % 9) + 1}.chat.naver.com/chat`;
+  return (sum % 9) + 1;
+}
+
+function chatTokenUrl(cid) {
+  return RELAY_URL
+    ? `${RELAY_URL}/token?cid=${cid}&key=${RELAY_KEY}`
+    : `https://comm-api.game.naver.com/nng_main/v1/chats/access-token?channelId=${cid}&chatType=STREAMING`;
+}
+
+function chatSocketUrl(cid) {
+  const n = chatServerNo(cid);
+  return RELAY_URL
+    ? `${RELAY_URL.replace(/^http/, "ws")}/chat?n=${n}&key=${RELAY_KEY}`
+    : `wss://kr-ss${n}.chat.naver.com/chat`;
 }
 
 function startChat(streamer, chatChannelId, onReady) {
@@ -171,12 +195,10 @@ function startChat(streamer, chatChannelId, onReady) {
   const connect = async () => {
     if (entry.closed) return;
     try {
-      const t = await getJSON(
-        `https://comm-api.game.naver.com/nng_main/v1/chats/access-token?channelId=${chatChannelId}&chatType=STREAMING`,
-      );
+      const t = await getJSON(chatTokenUrl(chatChannelId));
       const accTkn = t.content?.accessToken;
       if (!accTkn) throw new Error("채팅 토큰 없음");
-      const ws = new WebSocket(chatServer(chatChannelId));
+      const ws = new WebSocket(chatSocketUrl(chatChannelId));
       entry.ws = ws;
       ws.onopen = () => {
         ws.send(
@@ -278,6 +300,58 @@ async function flushChat(key, who, streamer) {
   ]);
 }
 
+// ───── 폰 알림 전달 (네이버 카페 / X) ─────
+const seenNotif = new Set();
+
+function listNotifications() {
+  return new Promise((resolve) => {
+    execFile("termux-notification-list", { timeout: 20000, maxBuffer: 8 << 20 }, (err, out) => {
+      if (err) return resolve(null);
+      try {
+        resolve(JSON.parse(out));
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+const memberNames = members.map((m) => m.name);
+const mentionsMember = (text) => {
+  const t = text.replace(/\s/g, "");
+  return [...memberNames, ...X_KEYWORDS].some((n) => t.includes(n.replace(/\s/g, "")));
+};
+
+// 전달할 알림이면 { icon, head, button } 반환
+function classify(n) {
+  const title = n.title ?? "";
+  const content = n.content ?? "";
+  if (n.packageName === "com.nhn.android.navercafe" && CAFE_NAMES.includes(title)) {
+    return { head: `📰 <b>${esc(title)}</b> 카페`, button: { text: "📰 카페 열기", url: CAFE_URL } };
+  }
+  if (n.packageName === "com.twitter.android" && mentionsMember(`${title} ${content}`)) {
+    return { head: `🐦 <b>X</b> ${esc(title)}`, button: { text: "🐦 X 열기", url: "https://x.com/notifications" } };
+  }
+  return null;
+}
+
+async function pollNotifications(first = false) {
+  const list = await listNotifications();
+  if (!list) return first ? log("폰 알림 읽기 실패 (Termux:API 알림 접근 권한 확인)") : undefined;
+  for (const n of list) {
+    const c = classify(n);
+    if (!c || !n.content) continue;
+    // 묶음 알림(요약+본문)이 같은 내용으로 두 번 나오므로 내용 기준으로 중복 제거
+    const id = `${n.packageName}|${n.when}|${n.title}|${n.content}`;
+    if (seenNotif.has(id)) continue;
+    seenNotif.add(id);
+    if (first) continue; // 시작할 때 이미 떠 있던 알림은 보내지 않음
+    log("알림 전달", n.packageName, n.content.slice(0, 40));
+    await send(`${c.head}\n${esc(n.content)}`, [[c.button]]);
+  }
+  if (seenNotif.size > 2000) seenNotif.clear(); // 오래 켜둘 때 메모리 정리 (드물게 중복 가능)
+}
+
 // ───── 실행 ─────
 async function main() {
   await pollAll(true);
@@ -289,6 +363,15 @@ async function main() {
     live.length ? live.map((m) => [{ text: `📺 ${m.name}`, url: liveUrl(m.id) }]) : undefined,
     true,
   );
+  if (WATCH_NOTIF) {
+    await pollNotifications(true);
+    (async () => {
+      for (;;) {
+        await sleep(NOTIF_SEC * 1000);
+        await pollNotifications().catch((e) => log("알림 전달 오류", e.message));
+      }
+    })();
+  }
   for (;;) {
     await sleep(POLL_SEC * 1000);
     await pollAll();
@@ -311,8 +394,15 @@ async function test() {
       resolve(ret === 0);
     });
   });
-  log("채팅 서버 접속:", ok ? "OK" : "실패");
+  log("채팅 서버 접속:", ok ? "OK" : "실패", RELAY_URL ? "(중계 경유)" : "(직접)");
   stopChat(m.id);
+  const list = await listNotifications();
+  if (!list) log("폰 알림 읽기: 실패");
+  else {
+    const hits = list.filter((n) => classify(n) && n.content);
+    log("폰 알림 읽기: OK,", list.length + "개 중 전달 대상", hits.length + "개");
+    for (const n of hits) log("  -", n.packageName, n.title, "|", n.content.slice(0, 40));
+  }
   process.exit(ok && r?.ok ? 0 : 1);
 }
 
