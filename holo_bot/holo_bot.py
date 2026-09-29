@@ -59,7 +59,9 @@ VIDEO_CACHE_TTL = 600             # 최근 영상 캐시
 VIDEO_COUNT = 5
 MIN_MEMBERS = 20                  # 이보다 적게 받아지면 사이트 구조가 바뀐 것으로 보고 캐시 유지
 LIVE_POLL_SEC = 60                # 방송 상태 확인 간격
-FALLBACK_MAX_CHANNELS = 30        # Holodex 가 안 될 때 유튜브로 직접 확인할 최대 채널 수
+FALLBACK_BATCH = 10               # Holodex 가 안 될 때 한 번에 유튜브로 직접 확인할 채널 수 (돌아가며)
+FALLBACK_INTERVAL_SEC = 300       # 그 확인 간격 — 유튜브 페이지가 커서(1MB 이상) 데이터를 아끼려고 느리게
+YT_PAGE_MAX_BYTES = 1_500_000     # 유튜브 /live 페이지는 필요한 부분까지만 읽음
 LATE_ALERT_SEC = 30 * 60          # 시작한 지 이보다 오래된 방송은 (봇이 꺼져 있었던 경우) 알림 생략
 UPCOMING_HOURS = 24               # 예정 방송 목록 범위
 NOTIF_POLL_SEC = 15               # 폰 알림(X) 확인 간격
@@ -492,10 +494,35 @@ def video_info(v, owners):
     }
 
 
+YT_CANONICAL_BYTES_RE = re.compile(rb'<link rel="canonical" href="([^"]+)"')
+
+
+def youtube_live_page(channel_id):
+    """채널의 /live 페이지를 판단에 필요한 곳까지만 읽는다 (데이터 절약).
+    방송이 없으면 canonical 이 채널 주소라서 거기서 멈추고, 있으면 videoDetails 의 설명 직전까지 읽는다."""
+    req = urllib.request.Request(YT_CHANNEL_LIVE_URL.format(channel_id), headers=YT_HEADERS)
+    buf = b""
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        while len(buf) < YT_PAGE_MAX_BYTES:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+            m = YT_CANONICAL_BYTES_RE.search(buf)
+            if not m:
+                continue
+            if b"/watch?v=" not in m.group(1):
+                break
+            i = buf.find(b'"videoDetails":{"videoId":"')
+            if i >= 0 and buf.find(b'"shortDescription"', i) > 0:
+                break
+    return buf.decode("utf-8", "replace")
+
+
 def youtube_live_video(channel_id):
     """유튜브 채널의 /live 페이지로 지금 방송 중인지 확인 (Holodex 가 안 될 때만 씀).
     /live 가 가리키는 영상의 videoDetails 에 "isLive":true 가 있고 이 채널 영상이면 방송 중."""
-    page = http_text(YT_CHANNEL_LIVE_URL.format(channel_id), headers=YT_HEADERS)
+    page = youtube_live_page(channel_id)
     m = YT_CANONICAL_WATCH_RE.search(page)
     if not m:
         return None  # 방송이 없으면 /live 가 채널 홈으로 감
@@ -531,6 +558,9 @@ class LiveTracker:
         self.error = ""
         self.has_state = os.path.exists(state_path)
         self.alerted = {}     # 알린 영상 id -> 시각 (재시작해도 같은 방송을 두 번 알리지 않게)
+        self.fb = {}          # 유튜브 직접 확인 결과: 채널 id -> 방송 중 영상 또는 None
+        self.fb_pos = 0       # 다음에 확인할 채널 순번 (돌아가며)
+        self.fb_last = 0.0    # 마지막 유튜브 직접 확인 시각
         if self.has_state:
             try:
                 with open(state_path, encoding="utf-8") as f:
@@ -554,25 +584,34 @@ class LiveTracker:
                 if self.source != "holodex":
                     log("방송 정보: Holodex 연결됨")
                 self.source, self.error = "holodex", ""
+                self.fb, self.fb_last = {}, 0.0  # 다음에 또 끊기면 바로 직접 확인부터
                 return videos
             except Exception as e:
                 if not self.error:  # 실패가 시작될 때 한 번만 기록
                     log(f"Holodex 실패 — 알림 켠 멤버만 유튜브로 직접 확인: {e}")
                 self.error = f"Holodex: {e}"
-        # Holodex 가 없거나 안 되면: 알림 켠 멤버의 채널만 유튜브 /live 페이지로 확인
+        # Holodex 가 없거나 안 되면: 알림 켠 멤버의 채널만 유튜브 /live 페이지로 확인.
+        # 페이지가 커서 5분마다 10채널씩 돌아가며 보고, 사이에는 마지막 결과를 그대로 쓴다.
         watched = [(cid, slugs) for cid, slugs in sorted(owners.items()) if set(slugs) & watch_slugs]
-        videos = []
-        for cid, slugs in watched[:FALLBACK_MAX_CHANNELS]:
-            try:
-                v = youtube_live_video(cid)
-            except Exception:
-                continue
-            if v:
-                v["slugs"] = list(slugs)
-                videos.append(v)
-            time.sleep(0.5)
+        now = time.time()
+        if watched and now - self.fb_last >= FALLBACK_INTERVAL_SEC:
+            self.fb_last = now
+            start = self.fb_pos % len(watched)
+            batch = [watched[(start + k) % len(watched)] for k in range(min(FALLBACK_BATCH, len(watched)))]
+            self.fb_pos = start + len(batch)
+            for cid, slugs in batch:
+                try:
+                    v = youtube_live_video(cid)
+                except Exception:
+                    continue  # 실패하면 이전 결과 유지
+                if v:
+                    v["slugs"] = list(slugs)
+                self.fb[cid] = v
+                time.sleep(0.5)
+        keep = {cid for cid, _ in watched}
+        self.fb = {cid: v for cid, v in self.fb.items() if cid in keep}
         self.source = "youtube"
-        return videos
+        return [v for v in self.fb.values() if v]
 
     def poll(self, watch_slugs=()):
         owners = tracked_channels(self.store.data)
@@ -948,7 +987,7 @@ def member_view(ctx, slug, gp=None):
 
 def live_status_note(lt):
     if lt.source == "youtube":
-        return "\n\n⚠️ Holodex 연결이 안 돼서 알림 켠 멤버만 유튜브로 직접 확인했어요."
+        return "\n\n⚠️ Holodex 연결이 안 돼서 알림 켠 멤버만 유튜브로 직접 확인 중이에요 (5분마다 조금씩, 늦을 수 있어요)."
     return ""
 
 
