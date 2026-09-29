@@ -74,6 +74,22 @@ node alert.mjs --test   # 테스트 알림 1개 + 채팅 서버 접속 확인
 ```
 폰 재부팅 후 자동 실행: `~/.termux/boot/chzzk-alert.sh` 에 `~/chzzk/start.sh` 한 줄 (Termux:Boot 앱 한 번 열어둬야 함).
 
+## 멤버 메뉴 (`stella_menu.py`)
+
+같은 봇에 holo_bot 같은 **멤버 메뉴**를 붙입니다. `alert.mjs` 는 보내기만 하므로 둘을 같이 켜도 충돌하지 않습니다.
+
+- `/menu` — 멤버 목록 (🔴 = 방송 중) → 멤버를 누르면 방송 상태(제목·카테고리·시청자) · 팔로워 · 채널 소개 · 치지직/X 버튼
+- `/live` — 지금 방송 중인 멤버
+- 개인 채팅에서 이름만 보내도 검색 (예: `마시로`)
+- 필요: `pkg install -y python` (표준 라이브러리만 사용). `.env` 의 `BOT_TOKEN`, `members.json` 을 그대로 씁니다.
+
+```sh
+python stella_menu.py --check   # 봇·웹훅·치지직 연결 점검
+./start-menu.sh                 # 백그라운드 실행 (다시 실행하면 재시작, 로그: menu.log)
+```
+폰 재부팅 후 자동 실행: `~/.termux/boot/chzzk-alert.sh` 에 `~/chzzk/start-menu.sh` 한 줄 추가.
+봇에 웹훅이 설정돼 있으면(다른 프로그램이 쓰는 중) 메뉴는 켜지지 않고 멈춥니다.
+
 ## 설정 (`.env`)
 | 키 | 기본값 | 설명 |
 |---|---|---|
