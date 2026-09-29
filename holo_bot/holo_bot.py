@@ -1015,7 +1015,7 @@ def subs_view(ctx):
     else:
         text += "아직 알림 켠 멤버가 없어요.\n멤버 카드의 <b>🔔 알림 켜기</b>, 또는 그룹 화면의 <b>🔔 전체 알림 켜기</b> 로 켤 수 있어요."
     text += "\n\n(X 알림은 봇이 돌아가는 폰의 X 앱에서 그 멤버 알림 🔔 이 켜져 있어야 와요)"
-    buttons = [button(member_button_label(ctx, t), cb_member(t["slug"], None)) for t in mine[:60]]
+    buttons = [button(member_button_label(ctx, t), cb_member(t["slug"], None)) for t in mine[:96]]  # 텔레그램 버튼 최대 100개
     rows = rows_of(buttons, 2)
     if mine:
         rows.append([button("🔕 알림 전부 끄기", "sc")])
