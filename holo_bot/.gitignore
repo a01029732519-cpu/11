@@ -1,0 +1,12 @@
+__pycache__/
+holo_bot.log
+holo_bot.log.old
+holo_bot.pid
+holodex_key.txt
+live_state.json
+live_state.json.tmp
+members.json
+members.json.tmp
+subs.json
+subs.json.tmp
+token.txt

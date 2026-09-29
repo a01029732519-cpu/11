@@ -119,3 +119,13 @@ Worker 는 채팅 WebSocket 을 그대로 넘겨주기만 해서(패스스루) C
 
 > 일부 와이파이는 `*.game.naver.com` / `*.chat.naver.com` 을 IP 단위로 막습니다. 그런 곳에서는 방송 켜짐 알림만 오고,
 > 채팅 알림은 모바일 데이터나 다른 네트워크로 바뀌면 자동으로 다시 붙습니다 (재시도 간격 15초 → 최대 5분).
+
+---
+
+# 홀로라이브 봇 (`holo_bot/`)
+
+홀로라이브 멤버 정보 · 방송 상태(Holodex) · X 알림 텔레그램 봇 (@hebist_holo_bot). 자세한 내용은 [`holo_bot/README.md`](holo_bot/README.md).
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/a01029732519-cpu/11/ccr-94b2240a-qx71ec/holo_bot/install.sh && bash install.sh
+```
