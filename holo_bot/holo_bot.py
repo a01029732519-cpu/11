@@ -416,8 +416,7 @@ def latest_videos(channel_id):
 # ---------------------------------------------------------------- 방송 상태 (Holodex, 안 되면 유튜브 직접)
 
 YT_CANONICAL_WATCH_RE = re.compile(r'<link rel="canonical" href="https://www\.youtube\.com/watch\?v=([\w-]{11})"')
-YT_TITLE_RE = re.compile(r'<meta name="title" content="([^"]*)"')
-YT_START_RE = re.compile(r'"startTimestamp":"([^"]+)"')
+YT_TITLE_RE = re.compile(r'"title":"((?:[^"\\]|\\.)*)"')
 
 
 def parse_time(s):
@@ -446,15 +445,13 @@ def load_holodex_key():
 
 
 def tracked_channels(data):
-    """방송을 감시할 채널 ID → 멤버 slug.
-    현역·어필리에이트만, 여러 멤버가 같이 쓰는 채널(holoAN 공용 채널, 공식 채널 등)은 제외한다."""
-    counts = {}
+    """방송을 감시할 채널 ID → 그 채널을 쓰는 멤버 slug 목록 (현역·어필리에이트만).
+    FUWAMOCO 처럼 여러 멤버가 같이 쓰는 채널은 그 멤버 모두의 방송으로 본다."""
+    owners = {}
     for t in data["members"].values():
-        if t.get("channel_id"):
-            counts[t["channel_id"]] = counts.get(t["channel_id"], 0) + 1
-    return {t["channel_id"]: t["slug"] for t in data["members"].values()
-            if t.get("channel_id") and counts[t["channel_id"]] == 1
-            and t.get("status", "").lower() in LIVE_TRACK_STATUS}
+        if t.get("channel_id") and t.get("status", "").lower() in LIVE_TRACK_STATUS:
+            owners.setdefault(t["channel_id"], []).append(t["slug"])
+    return owners
 
 
 def holodex_videos(key, channel_ids):
@@ -475,17 +472,17 @@ def video_info(v, owners):
     if not isinstance(v, dict):
         return None
     ch = v.get("channel") if isinstance(v.get("channel"), dict) else {}
-    slug = owners.get(ch.get("id") or v.get("channel_id"))
+    slugs = owners.get(ch.get("id") or v.get("channel_id"))
     vid = v.get("id") or ""
     status = v.get("status")
-    if not slug or not re.fullmatch(r"[\w-]{11}", vid) or v.get("type", "stream") != "stream" \
+    if not slugs or not re.fullmatch(r"[\w-]{11}", vid) or v.get("type", "stream") != "stream" \
             or status not in ("live", "upcoming"):
         return None
     start = parse_time(v.get("start_actual") if status == "live" else v.get("start_scheduled"))
     viewers = v.get("live_viewers")
     return {
         "id": vid,
-        "slug": slug,
+        "slugs": list(slugs),
         "title": v.get("title") or "",
         "status": status,
         "start": start or parse_time(v.get("available_at")),
@@ -496,22 +493,28 @@ def video_info(v, owners):
 
 
 def youtube_live_video(channel_id):
-    """유튜브 채널의 /live 페이지로 지금 방송 중인지 확인 (Holodex 가 안 될 때만 씀)."""
+    """유튜브 채널의 /live 페이지로 지금 방송 중인지 확인 (Holodex 가 안 될 때만 씀).
+    /live 가 가리키는 영상의 videoDetails 에 "isLive":true 가 있고 이 채널 영상이면 방송 중."""
     page = http_text(YT_CHANNEL_LIVE_URL.format(channel_id), headers=YT_HEADERS)
     m = YT_CANONICAL_WATCH_RE.search(page)
-    if not m or '"isLiveNow":true' not in page:
+    if not m:
+        return None  # 방송이 없으면 /live 가 채널 홈으로 감
+    vid = m.group(1)
+    i = page.find('"videoDetails":{"videoId":"%s"' % vid)
+    if i < 0:
         return None
-    title = YT_TITLE_RE.search(page)
-    start = YT_START_RE.search(page)
-    return {
-        "id": m.group(1),
-        "title": html.unescape(title.group(1)) if title else "",
-        "status": "live",
-        "start": parse_time(start.group(1)) if start else None,
-        "viewers": None,
-        "topic": "",
-        "url": YT_WATCH_URL.format(m.group(1)),
-    }
+    j = page.find('"shortDescription"', i)
+    block = page[i:j if 0 < j - i < 20000 else i + 5000]
+    if '"isLive":true' not in block or '"channelId":"%s"' % channel_id not in block:
+        return None
+    title = ""
+    if (t := YT_TITLE_RE.search(block)):
+        try:
+            title = json.loads('"%s"' % t.group(1))
+        except ValueError:
+            title = t.group(1)
+    return {"id": vid, "slugs": [], "title": title, "status": "live", "start": None,
+            "viewers": None, "topic": "", "url": YT_WATCH_URL.format(vid)}
 
 
 class LiveTracker:
@@ -521,7 +524,7 @@ class LiveTracker:
         self.store = store
         self.key = key
         self.state_path = state_path
-        self.live = {}        # slug -> 방송 중 영상
+        self.live = {}        # slug -> 방송 중 영상 (같이 쓰는 채널이면 여러 slug 가 같은 영상)
         self.upcoming = []    # 예정 영상 (시간순)
         self.updated = 0.0
         self.source = ""      # "holodex" | "youtube" | ""
@@ -556,40 +559,38 @@ class LiveTracker:
                 if not self.error:  # 실패가 시작될 때 한 번만 기록
                     log(f"Holodex 실패 — 알림 켠 멤버만 유튜브로 직접 확인: {e}")
                 self.error = f"Holodex: {e}"
-        # Holodex 가 없거나 안 되면: 알림 켠 멤버만 유튜브 채널 페이지로 확인
-        slug_to_cid = {s: c for c, s in owners.items()}
+        # Holodex 가 없거나 안 되면: 알림 켠 멤버의 채널만 유튜브 /live 페이지로 확인
+        watched = [(cid, slugs) for cid, slugs in sorted(owners.items()) if set(slugs) & watch_slugs]
         videos = []
-        for slug in sorted(watch_slugs)[:FALLBACK_MAX_CHANNELS]:
-            cid = slug_to_cid.get(slug)
-            if not cid:
-                continue
+        for cid, slugs in watched[:FALLBACK_MAX_CHANNELS]:
             try:
                 v = youtube_live_video(cid)
             except Exception:
                 continue
             if v:
-                v["slug"] = slug
+                v["slugs"] = list(slugs)
                 videos.append(v)
             time.sleep(0.5)
         self.source = "youtube"
         return videos
 
     def poll(self, watch_slugs=()):
-        data = self.store.data
-        owners = tracked_channels(data)
+        owners = tracked_channels(self.store.data)
         videos = self._fetch(owners, set(watch_slugs))
         now = time.time()
         live = {}
         for v in videos:
-            if v["status"] == "live":
-                cur = live.get(v["slug"])  # 한 멤버가 동시에 두 방송이면 먼저 시작한 것
+            if v["status"] != "live":
+                continue
+            for slug in v["slugs"]:
+                cur = live.get(slug)  # 한 멤버가 동시에 두 방송이면 먼저 시작한 것
                 if not cur or (v["start"] or now) < (cur["start"] or now):
-                    live[v["slug"]] = v
+                    live[slug] = v
         upcoming = sorted((v for v in videos if v["status"] == "upcoming" and v["start"]
                            and -1800 < v["start"] - now < UPCOMING_HOURS * 3600), key=lambda v: v["start"])
         first_run = not self.has_state  # 처음 설치한 뒤 첫 확인: 이미 하고 있던 방송은 알리지 않음
         new = []
-        for v in live.values():
+        for v in {v["id"]: v for v in live.values()}.values():
             if v["id"] in self.alerted:
                 continue
             self.alerted[v["id"]] = now
@@ -597,12 +598,16 @@ class LiveTracker:
             if not first_run and not late:
                 new.append(v)
         self.live, self.upcoming, self.updated = live, upcoming, now
-        if new or first_run or len(live):
+        if new or first_run or live:
             self._save()
         return new
 
+    def live_videos(self):
+        """지금 방송 중인 영상 (같은 영상은 한 번만, 시작 순)."""
+        return sorted({v["id"]: v for v in self.live.values()}.values(), key=lambda v: v["start"] or 0)
+
     def upcoming_of(self, slug):
-        return next((v for v in self.upcoming if v["slug"] == slug), None)
+        return next((v for v in self.upcoming if slug in v["slugs"]), None)
 
 
 # ---------------------------------------------------------------- 알림 설정 / X 알림
@@ -860,7 +865,7 @@ def menu_view(ctx):
         f"그룹을 고르세요. (멤버 {len(data['members'])}명 · {updated} 기준)\n"
         "이름을 바로 보내면 검색돼요. 예: <code>pekora</code>"
     )
-    n_live = len(ctx.live.live) if ctx.live else 0
+    n_live = len(ctx.live.live) if ctx.live else 0  # 방송 중인 멤버 수
     rows = [[button(f"🔴 방송 중 ({n_live})", "lv"), button("📅 예정 방송", "up")],
             [button(f"🔔 내 알림 ({len(ctx.my_subs())})", "my")]]
     buttons = [button(f"{group_label(g)} ({len(g['members'])})", f"g:{g['id']}") for g in data["groups"]]
@@ -947,21 +952,22 @@ def live_status_note(lt):
     return ""
 
 
+def names_of(data, slugs):
+    return " · ".join(data["members"][s]["name"] for s in slugs if s in data["members"])
+
+
 def live_view(ctx):
     data, lt = ctx.data, ctx.live
     back = [button("🔄 새로고침", "lv"), button("⬅️ 메뉴", "menu")]
     if not lt or not lt.updated:
         return ("🔴 방송 정보를 불러오는 중이에요. 잠시 뒤 새로고침을 눌러주세요.",
                 {"inline_keyboard": [back]}, no_preview())
-    items = sorted(lt.live.values(), key=lambda v: v["start"] or 0)
-    text = f"🔴 <b>지금 방송 중</b> — {len(items)}명 · {time.strftime('%H:%M', time.localtime(lt.updated))} 기준"
+    items = lt.live_videos()
+    text = f"🔴 <b>지금 방송 중</b> — {len(lt.live)}명 · {time.strftime('%H:%M', time.localtime(lt.updated))} 기준"
     if not items:
         text += "\n\n지금 방송 중인 멤버가 없어요."
     for v in items:
-        t = data["members"].get(v["slug"])
-        if not t:
-            continue
-        line = f"\n\n<b>{esc(t['name'])}</b>"
+        line = f"\n\n<b>{esc(names_of(data, v['slugs']))}</b>"
         if v["viewers"]:
             line += f" · 👀 {v['viewers']:,}"
         line += f"\n<a href=\"{html.escape(v['url'])}\">{esc(v['title'] or '제목 없음')}</a>"
@@ -970,8 +976,8 @@ def live_view(ctx):
             break
         text += line
     text += live_status_note(lt)
-    buttons = [button(f"🔴 {data['members'][v['slug']]['name']}", cb_member(v["slug"], None))
-               for v in items if v["slug"] in data["members"]]
+    buttons = [button(f"🔴 {data['members'][s]['name']}", cb_member(s, None))
+               for v in items for s in v["slugs"] if s in data["members"]]
     return text, {"inline_keyboard": rows_of(buttons[:40], 2) + [back]}, no_preview()
 
 
@@ -988,10 +994,10 @@ def upcoming_view(ctx):
     if not lt.upcoming:
         text += "\n\n예정된 방송이 없어요."
     for v in lt.upcoming:
-        t = data["members"].get(v["slug"])
-        if not t:
+        names = names_of(data, v["slugs"])
+        if not names:
             continue
-        line = (f"\n• {fmt_time(v['start'])} <b>{esc(t['name'])}</b>\n"
+        line = (f"\n• {fmt_time(v['start'])} <b>{esc(names)}</b>\n"
                 f"  <a href=\"{html.escape(v['url'])}\">{esc(v['title'] or '제목 없음')}</a>")
         if len(text) + len(line) > 3800:
             text += "\n…"
@@ -1062,8 +1068,12 @@ def links_text(query, results, kind):
 
 
 def live_alert_view(data, v):
-    t = data["members"][v["slug"]]
-    text = f"🔴 <b>LIVE</b> · <b>{esc(t['name'])}</b>" + (f" ({esc(t['name_jp'])})" if t["name_jp"] else "")
+    slugs = [s for s in v["slugs"] if s in data["members"]]
+    t = data["members"][slugs[0]]
+    if len(slugs) == 1:
+        text = f"🔴 <b>LIVE</b> · <b>{esc(t['name'])}</b>" + (f" ({esc(t['name_jp'])})" if t["name_jp"] else "")
+    else:
+        text = f"🔴 <b>LIVE</b> · <b>{esc(names_of(data, slugs))}</b>"
     text += f"\n<blockquote>{esc(v['title'] or '제목 없음')}</blockquote>"
     if v.get("topic"):
         text += f"\n🎮 {esc(v['topic'])}"
@@ -1220,8 +1230,9 @@ class Bot:
 
     # ---- 알림 보내기 (백그라운드)
 
-    def broadcast(self, slug, view):
-        for chat_id in self.subs.chats_for(slug):
+    def broadcast(self, slugs, view):
+        chats = sorted({c for s in slugs for c in self.subs.chats_for(s)})
+        for chat_id in chats:
             try:
                 self.send(chat_id, view)
             except TelegramError as e:
@@ -1240,9 +1251,10 @@ class Bot:
             last_live = now
             try:
                 for v in self.live.poll(self.subs.all_slugs()):
-                    t = self.store.data["members"].get(v["slug"])
-                    log(f"방송 시작: {t['name'] if t else v['slug']} — {v['title']}")
-                    self.broadcast(v["slug"], live_alert_view(self.store.data, v))
+                    if not any(s in self.store.data["members"] for s in v["slugs"]):
+                        continue
+                    log(f"방송 시작: {names_of(self.store.data, v['slugs'])} — {v['title']}")
+                    self.broadcast(v["slugs"], live_alert_view(self.store.data, v))
             except Exception as e:
                 log(f"방송 확인 오류: {type(e).__name__}: {e}")
         if self.xwatch and self.subs.all_slugs():
@@ -1250,7 +1262,7 @@ class Bot:
                 for t, content in self.xwatch.poll(self.store.data):
                     if self.subs.chats_for(t["slug"]):
                         log(f"X 알림: {t['name']}")
-                        self.broadcast(t["slug"], x_alert_view(t, content))
+                        self.broadcast([t["slug"]], x_alert_view(t, content))
             except Exception as e:
                 log(f"X 알림 오류: {type(e).__name__}: {e}")
         return last_live
@@ -1304,34 +1316,36 @@ def print_summary(data):
     print(f"X/YouTube 링크 없는 멤버: {', '.join(missing) or '없음'}")
     no_videos = [t["name"] for t in data["members"].values() if t["youtube"] and not t["channel_id"]]
     print(f"최근 영상 안 되는 멤버: {', '.join(no_videos) or '없음'}")
-    print(f"방송 감시 채널: {len(tracked_channels(data))}개")
+    owners = tracked_channels(data)
+    print(f"방송 감시 채널: {len(owners)}개 (멤버 {sum(len(v) for v in owners.values())}명)")
 
 
 def check(store):
     """설치 점검: Holodex · 유튜브 직접 확인 · 폰 알림 읽기."""
     data = store.data
     owners = tracked_channels(data)
-    print(f"방송 감시 채널 {len(owners)}개")
-    live_slugs = []
+    print(f"방송 감시 채널 {len(owners)}개 (멤버 {sum(len(v) for v in owners.values())}명)")
+    live_cids = []
     key = load_holodex_key()
     if not key:
         print("❌ Holodex 키 없음 (holodex_key.txt)")
     else:
         try:
             videos = [v for v in (video_info(r, owners) for r in holodex_videos(key, owners)) if v]
-            live_slugs = [v["slug"] for v in videos if v["status"] == "live"]
+            live = [v for v in videos if v["status"] == "live"]
             up = [v for v in videos if v["status"] == "upcoming"]
-            names = [data["members"][s]["name"] for s in live_slugs]
-            print(f"✅ Holodex: 방송 중 {len(live_slugs)}명 {names}, 예정 {len(up)}개")
+            print(f"✅ Holodex: 방송 중 {len(live)}개 {[names_of(data, v['slugs']) for v in live]}, 예정 {len(up)}개")
+            live_cids = [c for c, sl in owners.items() if any(set(sl) & set(v["slugs"]) for v in live)]
         except Exception as e:
             print(f"❌ Holodex 실패: {e}")
-    # 유튜브 직접 확인(Holodex 대체용): 방송 중인 멤버가 있으면 그 채널도 시험해서 실제로 잡히는지 본다
-    slug_to_cid = {s: c for c, s in owners.items()}
-    for slug in (live_slugs[:1] + sorted(slug_to_cid)[:2])[:3]:
-        name = data["members"][slug]["name"]
+    # 유튜브 직접 확인(Holodex 대체용): 방송 중인 채널로 시험해서 실제로 잡히는지 본다
+    for cid in (live_cids[:2] + sorted(owners)[:1])[:3]:
+        name = names_of(data, owners[cid])
         try:
-            v = youtube_live_video(slug_to_cid[slug])
-            print(f"✅ 유튜브 직접 확인 {name}: " + (f"방송 중 — {v['title']}" if v else "방송 안 함"))
+            v = youtube_live_video(cid)
+            print(f"{'✅' if (v is not None) == (cid in live_cids) else '❌'} 유튜브 직접 확인 {name}: "
+                  + (f"방송 중 — {v['title']}" if v else "방송 안 함")
+                  + (" (Holodex 는 방송 중)" if cid in live_cids else ""))
         except Exception as e:
             print(f"❌ 유튜브 직접 확인 {name}: {e}")
     items = XWatcher.list_notifications()
