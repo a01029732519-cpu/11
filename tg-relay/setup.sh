@@ -1,6 +1,6 @@
 # tg-relay 설치: 코드 받기 + .env 만들기(봇 토큰은 클립보드에서 읽음) + 지금 한 번 실행
 set -e
-SHA=__SHA__
+SHA=3fd2a799af9d86e18229c81ca7037eae3138f80e
 R=https://raw.githubusercontent.com/a01029732519-cpu/11/$SHA/tg-relay
 mkdir -p ~/tg-relay
 cd ~/tg-relay
