@@ -187,6 +187,9 @@ async function relay(key, text) {
     const last = copies.reduce((a, b) => (b.cy > a.cy ? b : a));
     await run("termux-clipboard-set", [""]).catch(() => {});
     await tap(last.cx, last.cy);
+    await sleep(700);
+    // 안드로이드는 뒤에 있는 앱의 클립보드 읽기를 막아서, 읽는 동안만 Termux를 앞으로 띄운다
+    await shell("am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1").catch(() => {});
     for (let i = 0; i < 5; i++) {
       await sleep(800);
       const { stdout } = await run("termux-clipboard-get", [], { timeout: 15_000 });
@@ -200,7 +203,7 @@ async function relay(key, text) {
   const texts = nodes.filter((n) => n.pkg === app.pkg && n.text && !/EditText|Button/.test(n.cls) && n.y2 <= editTop);
   const head = text.trim().slice(0, 20);
   const idx = texts.map((n) => n.text).findLastIndex((t) => t.includes(head));
-  const UI = /^(이미지|사진|복사|공유|좋아요|별로예요|다시 생성|편집|더 보기|음성|받아쓰기|Copy|Share|Edit|Retry|Image)$/i;
+  const UI = /^(이미지|사진|복사|공유|좋아요|별로예요|다시 생성|편집|더 보기|음성|받아쓰기|Copy|Share|Edit|Retry|Image)$|실수할 수 있습니다|실수를 할 수 있습니다|can make mistakes/i;
   const body = texts.slice(idx + 1).map((n) => n.text.trim()).filter((t) => t && !UI.test(t)).join("\n").trim();
   return body || "(답변을 읽지 못했어요. 앱에서 확인해 주세요.)";
 }
