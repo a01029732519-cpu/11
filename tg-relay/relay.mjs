@@ -181,26 +181,35 @@ async function relay(key, text) {
   await tap(sendBtn.cx, sendBtn.cy);
   log("sent to", app.name);
 
-  // 답변 끝날 때까지 기다리기: 중지 버튼이 사라지고 화면이 두 번 연속 같으면 끝
+  // 답변 끝날 때까지 기다리기: 내가 보낸 말 아래에 복사 버튼이 생기고, 중지 버튼이 없고, 화면이 두 번 연속 같으면 끝
+  const head = text.trim().slice(0, 20);
+  const anchorOf = (ns) => ns.filter((n) => n.pkg === app.pkg && n.text && n.text.includes(head)).at(-1);
+  const copyAfter = (ns) => {
+    const a = anchorOf(ns);
+    if (!a) return null;
+    const c = find(ns, COPY_RE).filter((n) => n.pkg === app.pkg && n.cy > a.y2);
+    return c.length ? c.reduce((x, y) => (y.cy < x.cy ? y : x)) : null;
+  };
   const start = Date.now();
   let prev = "", same = 0;
   await sleep(4000);
   while (Date.now() - start < MAX_WAIT_MS) {
     nodes = await dump();
     const busy = find(nodes, STOP_RE).some((n) => n.pkg === app.pkg);
+    const ready = !busy && copyAfter(nodes);
     const snap = nodes.filter((n) => n.pkg === app.pkg).map(label).join("\u0001");
-    same = !busy && snap === prev ? same + 1 : 0;
+    same = ready && snap === prev ? same + 1 : 0;
     prev = snap;
-    if (same >= 2) break;
+    if (same >= 1) break;
     await sleep(3000);
   }
 
-  // 1순위: 마지막 답변의 복사 버튼 → 클립보드
-  const copies = find(nodes, COPY_RE).filter((n) => n.pkg === app.pkg);
-  if (copies.length) {
-    const last = copies.reduce((a, b) => (b.cy > a.cy ? b : a));
-    await run("termux-clipboard-set", [""]).catch(() => {});
-    await tap(last.cx, last.cy);
+  // 1순위: 내 메시지 바로 아래 답변의 복사 버튼 → 클립보드 (Termux를 앞으로 띄워 읽기)
+  nodes = await dump();
+  const cp = copyAfter(nodes);
+  if (cp) {
+    await run("termux-clipboard-set", [" "]).catch(() => {});
+    await tap(cp.cx, cp.cy);
     await sleep(700);
     // 안드로이드는 뒤에 있는 앱의 클립보드 읽기를 막아서, 읽는 동안만 Termux를 앞으로 띄운다
     await shell("am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1").catch(() => {});
@@ -211,12 +220,13 @@ async function relay(key, text) {
       if (got && got !== text.trim()) { log("answer via clipboard", got.length); return got; }
     }
     log("clipboard empty, fallback to screen text");
+  } else {
+    log("no copy button under my message, fallback to screen text");
   }
 
   // 2순위: 화면 글자에서 내가 보낸 말 아래쪽 글만 모으기
   const editTop = (nodes.filter((n) => /EditText/.test(n.cls)).at(-1) ?? { y1: 99999 }).y1;
   const texts = nodes.filter((n) => n.pkg === app.pkg && n.text && !/EditText|Button/.test(n.cls) && n.y2 <= editTop);
-  const head = text.trim().slice(0, 20);
   const idx = texts.map((n) => n.text).findLastIndex((t) => t.includes(head));
   const UI = /^(이미지|사진|복사|공유|좋아요|별로예요|다시 생성|편집|더 보기|음성|받아쓰기|Copy|Share|Edit|Retry|Image)$|실수할 수 있습니다|실수를 할 수 있습니다|can make mistakes/i;
   const body = texts.slice(idx + 1).map((n) => n.text.trim()).filter((t) => t && !UI.test(t)).join("\n").trim();
