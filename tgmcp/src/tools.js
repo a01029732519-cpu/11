@@ -1,6 +1,6 @@
 // MCP 도구 정의 + 실행
 import { ask } from "./ask.js";
-import { LEVELS, chunk, formatNotify, formatQuestion } from "./format.js";
+import { LEVELS, formatNotify, formatQuestion } from "./format.js";
 
 export class ToolInputError extends Error {}
 
@@ -18,26 +18,22 @@ const TOOLS = [
   {
     name: "tg_notify",
     description:
-      "사용자의 텔레그램으로 Claude의 활동을 전부 미러링한다. 요청 접수(info), 단계별 진행(progress, 무음), " +
-      "최종 답변 전문(done), 주의(warn), 오류(error)를 보낼 때 사용. 긴 글은 자동으로 여러 메시지로 나뉜다. 비밀값은 ***로 가려서 보낼 것.",
+      "사용자의 텔레그램으로 알림을 보낸다. 오래 걸리는 작업(폰 조작 등)의 진행 상황, 완료, 오류를 알릴 때 사용. " +
+      "level: progress(무음, 중간 진행), done(완료), warn, error, info.",
     inputSchema: {
       type: "object",
       properties: {
-        message: { type: "string", description: "보낼 내용 (최대 12000자, 길면 자동 분할)" },
+        message: { type: "string", description: "알림 내용 (짧고 구체적으로)" },
         level: { type: "string", enum: Object.keys(LEVELS), default: "info" },
       },
       required: ["message"],
     },
     async run(args, ctx) {
-      const message = requireString(args, "message", 12000);
+      const message = requireString(args, "message", 3500);
       const level = args.level ?? "info";
       if (!LEVELS[level]) throw new ToolInputError(`level은 ${Object.keys(LEVELS).join(", ")} 중 하나`);
-      const parts = chunk(message);
-      for (let i = 0; i < parts.length; i++) {
-        const tag = parts.length > 1 ? ` (${i + 1}/${parts.length})` : "";
-        await ctx.tg.sendMessage(ctx.chatId, formatNotify(ctx.source, level, parts[i], tag), { silent: LEVELS[level].silent });
-      }
-      return parts.length > 1 ? `알림 보냄 (${parts.length}개로 나눔)` : "알림 보냄";
+      await ctx.tg.sendMessage(ctx.chatId, formatNotify(ctx.source, level, message), { silent: LEVELS[level].silent });
+      return "알림 보냄";
     },
   },
   {
