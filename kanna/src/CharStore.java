@@ -31,8 +31,11 @@ public class CharStore {
         return new File(d, "chars");
     }
 
+    static final String HEBI = "hebi";
+
     static String selected(Context c) {
-        return c.getSharedPreferences(PREF, 0).getString(KEY, "");
+        String s = c.getSharedPreferences(PREF, 0).getString(KEY, "");
+        return HEBI.equals(s) ? s : "";
     }
 
     public static InputStream open(Context c, String path) throws IOException {
@@ -45,22 +48,15 @@ public class CharStore {
     }
 
     static String[] list(Context c) {
-        ArrayList<String> out = new ArrayList<String>();
-        File[] fs = root(c).listFiles();
-        if (fs != null) {
-            for (File f : fs) {
-                if (f.isDirectory() && new File(f, "idle.txt").isFile() && new File(f, "idle.png").isFile()) {
-                    out.add(f.getName());
-                }
-            }
+        File d = new File(root(c), HEBI);
+        if (new File(d, "idle.txt").isFile() && new File(d, "idle.png").isFile()) {
+            return new String[] { HEBI };
         }
-        String[] a = out.toArray(new String[0]);
-        Arrays.sort(a);
-        return a;
+        return new String[0];
     }
 
     static String title(Context c, String dir) {
-        if (dir == null || dir.length() == 0) return "기본 캐릭터";
+        if (dir == null || dir.length() == 0) return "칸나";
         File n = new File(new File(root(c), dir), "name.txt");
         if (n.isFile()) {
             BufferedReader r = null;
@@ -73,7 +69,7 @@ public class CharStore {
                 try { if (r != null) r.close(); } catch (Exception e) { }
             }
         }
-        return dir;
+        return "헤비";
     }
 
     static void apply(Context c, String dir) {
@@ -131,32 +127,28 @@ public class CharStore {
         }
     }
 
+    static boolean hasHebi(Context c) {
+        return list(c).length > 0;
+    }
+
     static void show(final Activity a, final Button b) {
-        final String[] dirs = list(a);
-        final String[] names = new String[dirs.length + 1];
-        names[0] = title(a, "");
-        for (int i = 0; i < dirs.length; i++) names[i + 1] = title(a, dirs[i]);
-        String cur = selected(a);
-        int checked = 0;
-        for (int i = 0; i < dirs.length; i++) if (dirs[i].equals(cur)) checked = i + 1;
+        final String[] names = { title(a, ""), title(a, HEBI) };
+        int checked = selected(a).length() == 0 ? 0 : 1;
         AlertDialog.Builder bd = new AlertDialog.Builder(a);
         bd.setTitle("캐릭터 선택");
         bd.setSingleChoiceItems(names, checked, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
-                String dir = which == 0 ? "" : dirs[which - 1];
-                apply(a, dir);
+                if (which == 1 && !hasHebi(a)) {
+                    Toast.makeText(a, "헤비 파일이 없어요: " + new File(root(a), HEBI).getAbsolutePath(), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                apply(a, which == 0 ? "" : HEBI);
                 b.setText(label(a));
                 Toast.makeText(a, names[which] + " 적용!", Toast.LENGTH_SHORT).show();
                 d.dismiss();
             }
         });
-        if (dirs.length == 0) {
-            bd.setMessage(null);
-        }
         bd.setNegativeButton("닫기", null);
         bd.show();
-        if (dirs.length == 0) {
-            Toast.makeText(a, "추가 캐릭터 없음: " + root(a).getAbsolutePath(), Toast.LENGTH_LONG).show();
-        }
     }
 }
