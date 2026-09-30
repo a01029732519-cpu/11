@@ -194,8 +194,9 @@ async function relay(key, text) {
       await sleep(800);
       const { stdout } = await run("termux-clipboard-get", [], { timeout: 15_000 });
       const got = stdout.trim();
-      if (got && got !== text.trim()) return got;
+      if (got && got !== text.trim()) { log("answer via clipboard", got.length); return got; }
     }
+    log("clipboard empty, fallback to screen text");
   }
 
   // 2순위: 화면 글자에서 내가 보낸 말 아래쪽 글만 모으기
@@ -205,6 +206,7 @@ async function relay(key, text) {
   const idx = texts.map((n) => n.text).findLastIndex((t) => t.includes(head));
   const UI = /^(이미지|사진|복사|공유|좋아요|별로예요|다시 생성|편집|더 보기|음성|받아쓰기|Copy|Share|Edit|Retry|Image)$|실수할 수 있습니다|실수를 할 수 있습니다|can make mistakes/i;
   const body = texts.slice(idx + 1).map((n) => n.text.trim()).filter((t) => t && !UI.test(t)).join("\n").trim();
+  log("answer via screen", body.length, "nodes", texts.length, "idx", idx);
   return body || "(답변을 읽지 못했어요. 앱에서 확인해 주세요.)";
 }
 
