@@ -2,7 +2,7 @@
 # 사용: bash s10.sh <BOT_TOKEN>   (토큰은 저장소에 올리지 않음)
 set -e
 [ -n "$1" ] || { echo "usage: bash s10.sh <BOT_TOKEN>"; exit 1; }
-SHA=__SHA__
+SHA=693a0e102dad18cca3bbce3c9ca981df8d7dda3c
 R=https://raw.githubusercontent.com/a01029732519-cpu/11/$SHA/tgmcp/src
 cd ~/tg-mcp
 rm -rf src.bak && cp -r src src.bak
