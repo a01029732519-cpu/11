@@ -247,20 +247,22 @@ async function doNew() {
   }
 }
 
+const answerCb = (id, text) => tg("answerCallbackQuery", { callback_query_id: id, text }).catch(() => {});
+
 async function handle(u) {
   const cq = u.callback_query;
   if (cq) {
-    if (String(cq.from?.id) !== CHAT_ID) return tg("answerCallbackQuery", { callback_query_id: cq.id, text: "권한 없음" });
+    if (String(cq.from?.id) !== CHAT_ID) return answerCb(cq.id, "권한 없음");
     const d = cq.data ?? "";
     if (d.startsWith("t:") && APPS[d.slice(2)]) {
       state.target = d.slice(2); await saveState();
-      await tg("answerCallbackQuery", { callback_query_id: cq.id, text: `${APPS[state.target].name}로 바꿨어요` });
+      await answerCb(cq.id, `${APPS[state.target].name}로 바꿨어요`);
       await tg("editMessageText", { chat_id: CHAT_ID, message_id: cq.message.message_id, text: menuText(), parse_mode: "HTML", reply_markup: menuKeyboard() }).catch(() => {});
     } else if (d === "new") {
-      await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "새 대화를 여는 중…" });
+      await answerCb(cq.id, "새 대화를 여는 중…");
       await doNew();
     } else if (d === "status") {
-      await tg("answerCallbackQuery", { callback_query_id: cq.id, text: `대상: ${APPS[state.target].name} · 대기 ${queue.length}건${busy ? " · 처리 중" : ""}` });
+      await answerCb(cq.id, `대상: ${APPS[state.target].name} · 대기 ${queue.length}건${busy ? " · 처리 중" : ""}`);
     } else {
       // tg_ask(알림 도구)의 버튼일 수 있으니 건드리지 않음
     }
