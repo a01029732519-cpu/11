@@ -17,7 +17,7 @@ const SECRET_PATTERNS = [
   /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}\b/g, // sk-... 류
   /\b(?:ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}\b/g, // 깃허브 토큰
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi,
-  /\b((?:token|secret|password|passwd|api[_-]?key|key|비번|비밀번호|pin|핀)\s*[:=]\s*)[^\s"',;]{4,}/gi,
+  /(?<![A-Za-z0-9_])((?:token|secret|password|passwd|api[_-]?key|key|비번|비밀번호|pin|핀)\s*[:=]\s*)[^\s"',;]{4,}/gi,
 ];
 
 export function redact(text) {
