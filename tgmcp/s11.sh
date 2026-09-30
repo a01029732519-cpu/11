@@ -1,6 +1,6 @@
 # tg-mcp 코드만 교체 (봇 토큰 등 시크릿은 서버 것을 유지) + 연결 테스트
 set -e
-SHA=__SHA__
+SHA=6abb6dd982c77eaf3eb4e8c2cb9b16cccbbc88b0
 R=https://raw.githubusercontent.com/a01029732519-cpu/11/$SHA/tgmcp
 cd ~/tg-mcp
 rm -rf src.bak && cp -r src src.bak
