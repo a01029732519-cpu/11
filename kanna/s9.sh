@@ -1,11 +1,11 @@
 # 헤비 그림을 APK 안(assets/hebi2)에 포함한 자체 완결형 수정본 빌드 + 덮어쓰기 설치(-r, 같은 서명키)
 set -e
-R=https://raw.githubusercontent.com/a01029732519-cpu/11/claude/awesome-carson-wta984/kanna
+R=https://raw.githubusercontent.com/a01029732519-cpu/11/963e59d58ffb7ea3e9122ed6d566c4ead36615ec/kanna
 cd ~/kanna
 [ -f chars2/hebi/idle.png ] || { echo NO_HEBI; exit 1; }
 rm -rf m; mkdir m; cd m
 for f in classes.dex classes2.dex classes3.dex; do curl -sfLo $f $R/dex/$f; done
-sha256sum classes*.dex | cut -c1-16
+sha256sum classes3.dex | cut -c1-16; echo want 66b158c74967118d
 cp ../kanna-2.2.apk u.apk
 zip -dq u.apk 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' 'classes*.dex' || true
 zip -q u.apk classes.dex classes2.dex classes3.dex
