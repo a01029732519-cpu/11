@@ -158,11 +158,25 @@ async function relay(key, text) {
   await tap(edit.cx, edit.cy);
   await sleep(500);
   await run("termux-clipboard-set", [text], { timeout: 15_000 });
-  await shell("input keyevent 279"); // 붙여넣기
-  await sleep(900);
-
-  nodes = await dump();
-  const sendBtn = find(nodes, SEND_RE).filter((n) => n.pkg === app.pkg).at(-1);
+  let sendBtn;
+  for (let attempt = 0; attempt < 3 && !sendBtn; attempt++) {
+    if (attempt === 0) {
+      await shell("input keyevent 279"); // 붙여넣기 키
+    } else if (attempt === 1) {
+      await tap(edit.cx, edit.cy); await sleep(400);
+      await shell("input keyevent 279");
+    } else {
+      // 길게 눌러서 나오는 '붙여넣기' 메뉴
+      await shell(`input swipe ${edit.cx} ${edit.cy} ${edit.cx} ${edit.cy} 900`);
+      await sleep(900);
+      const pn = find(await dump(), /^(붙여넣기|Paste)$/i)[0];
+      if (pn) await tap(pn.cx, pn.cy);
+    }
+    await sleep(1000);
+    nodes = await dump();
+    sendBtn = find(nodes, SEND_RE).filter((n) => n.pkg === app.pkg).at(-1);
+    if (!sendBtn) log("paste attempt", attempt + 1, "failed");
+  }
   if (!sendBtn) throw new Error(`${app.name} 보내기 버튼을 못 찾았어요 (붙여넣기 실패?)`);
   await tap(sendBtn.cx, sendBtn.cy);
   log("sent to", app.name);
