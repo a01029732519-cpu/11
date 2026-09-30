@@ -39,15 +39,24 @@ public class CharStore {
     }
 
     public static InputStream open(Context c, String path) throws IOException {
-        String sel = selected(c);
-        if (sel.length() > 0 && path.startsWith("hebi/")) {
-            File f = new File(new File(root(c), sel), path.substring(5));
+        if (selected(c).length() > 0 && path.startsWith("hebi/")) {
+            String rel = path.substring(5);
+            try {
+                return c.getAssets().open("hebi2/" + rel);
+            } catch (IOException e) {
+            }
+            File f = new File(new File(root(c), HEBI), rel);
             if (f.isFile()) return new FileInputStream(f);
         }
         return c.getAssets().open(path);
     }
 
     static String[] list(Context c) {
+        try {
+            String[] a = c.getAssets().list("hebi2");
+            if (a != null && a.length > 0) return new String[] { HEBI };
+        } catch (Exception e) {
+        }
         File d = new File(root(c), HEBI);
         if (new File(d, "idle.txt").isFile() && new File(d, "idle.png").isFile()) {
             return new String[] { HEBI };
@@ -56,20 +65,7 @@ public class CharStore {
     }
 
     static String title(Context c, String dir) {
-        if (dir == null || dir.length() == 0) return "칸나";
-        File n = new File(new File(root(c), dir), "name.txt");
-        if (n.isFile()) {
-            BufferedReader r = null;
-            try {
-                r = new BufferedReader(new InputStreamReader(new FileInputStream(n), "UTF-8"));
-                String s = r.readLine();
-                if (s != null && s.trim().length() > 0) return s.trim();
-            } catch (Exception e) {
-            } finally {
-                try { if (r != null) r.close(); } catch (Exception e) { }
-            }
-        }
-        return "헤비";
+        return (dir == null || dir.length() == 0) ? "칸나" : "헤비";
     }
 
     static void apply(Context c, String dir) {
@@ -139,7 +135,7 @@ public class CharStore {
         bd.setSingleChoiceItems(names, checked, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
                 if (which == 1 && !hasHebi(a)) {
-                    Toast.makeText(a, "헤비 파일이 없어요: " + new File(root(a), HEBI).getAbsolutePath(), Toast.LENGTH_LONG).show();
+                    Toast.makeText(a, "헤비 그림이 앱에 없어요", Toast.LENGTH_LONG).show();
                     return;
                 }
                 apply(a, which == 0 ? "" : HEBI);
