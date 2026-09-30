@@ -7,7 +7,7 @@ cd ~/tg-relay
 curl -sfLo relay.mjs $R/relay.mjs
 curl -sfLo start.sh $R/start.sh && chmod +x start.sh
 if [ ! -s .env ]; then
-  T=$(termux-clipboard-get | tr -d ' \n\r' | grep -oE '[0-9]{8,12}:[A-Za-z0-9_-]{30,}' | head -1)
+  T=$(termux-clipboard-get | grep -oE '[0-9]{8,12}:[A-Za-z0-9_-]{30,}' | head -1)
   echo "$T" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]{30,}$' || { echo "CLIPBOARD_NOT_TOKEN"; exit 1; }
   (umask 077; printf 'BOT_TOKEN=%s\nCHAT_ID=8891258606\n' "$T" > .env)
   termux-clipboard-set " "
