@@ -157,6 +157,9 @@ async function relay(key, text) {
   const beforeCopies = find(nodes, COPY_RE).length;
   await tap(edit.cx, edit.cy);
   await sleep(500);
+  // 입력창에 남아 있던 글 지우기 (Ctrl+A → Delete)
+  await shell("input keycombination 113 29 >/dev/null 2>&1; input keyevent 67").catch(() => {});
+  await sleep(300);
   await run("termux-clipboard-set", [text], { timeout: 15_000 });
   let sendBtn;
   for (let attempt = 0; attempt < 3 && !sendBtn; attempt++) {
