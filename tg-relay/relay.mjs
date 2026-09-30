@@ -178,7 +178,19 @@ async function relay(key, text) {
     if (!sendBtn) log("paste attempt", attempt + 1, "failed");
   }
   if (!sendBtn) throw new Error(`${app.name} 보내기 버튼을 못 찾았어요 (붙여넣기 실패?)`);
-  await tap(sendBtn.cx, sendBtn.cy);
+  // 보내기: 누른 뒤 입력창에 내 글이 남아 있으면 버튼 위치를 다시 찾아 한 번 더 누른다
+  const head0 = text.trim().slice(0, 20);
+  let sent = false;
+  for (let attempt = 0; attempt < 3 && !sent; attempt++) {
+    await tap(sendBtn.cx, sendBtn.cy);
+    await sleep(1500);
+    nodes = await dump();
+    const stillThere = nodes.some((n) => n.pkg === app.pkg && /EditText/.test(n.cls) && n.text.includes(head0));
+    if (!stillThere) { sent = true; break; }
+    log("send attempt", attempt + 1, "did not send");
+    sendBtn = find(nodes, SEND_RE).filter((n) => n.pkg === app.pkg).at(-1) ?? sendBtn;
+  }
+  if (!sent) throw new Error(`${app.name} 보내기가 안 됐어요 (입력창에 글이 남아 있음)`);
   log("sent to", app.name);
 
   // 답변 끝날 때까지 기다리기: 내가 보낸 말 아래에 복사 버튼이 생기고, 중지 버튼이 없고, 화면이 두 번 연속 같으면 끝
