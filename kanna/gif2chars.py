@@ -3,7 +3,7 @@
 # 경로에 hebi/헤비 또는 kanna/칸나, 파일 이름에 상태 이름(idle, think ... 또는 평소, 생각중 ...)이 있으면 됨.
 # 프레임은 버리지 않고 쓰되, 앱 메모리 때문에 상태마다 최대 32장까지만 (많으면 고르게 골라냄).
 import io, math, os, re, sys, zipfile
-from PIL import Image
+from PIL import Image, ImageChops
 
 SRC = sys.argv[1]
 OUT = os.path.expanduser(sys.argv[2] if len(sys.argv) > 2 else '~/kanna/chars_new')
@@ -62,6 +62,9 @@ def frames(data):
 
 
 def pick(fr):
+    # 마지막 장이 첫 장과 똑같으면 반복할 때 같은 장면이 두 번 나와 멈칫하므로 뺌
+    if len(fr) > 2 and ImageChops.difference(fr[0][0], fr[-1][0]).getbbox() is None:
+        fr = fr[:-1]
     step = max(1, math.ceil(len(fr) / MAXF))
     out = []
     for i in range(0, len(fr), step):
